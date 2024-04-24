@@ -6,7 +6,7 @@ from omegaconf import OmegaConf
 import os
 import sys
 sys.path.append('../')
-from datasets import MegaScaleDataset, ddgBenchDataset, FireProtDataset, Mutation
+from datasets import MegaScaleDataset, ddgBenchDataset, FireProtDataset, Mutation, CustomDataset
 from protein_mpnn_utils import loss_smoothed, tied_featurize
 from train_thermompnn import TransferModelPL
 from model_utils import featurize
@@ -65,10 +65,13 @@ def main(cfg, args):
 
     cfg = OmegaConf.merge(config, cfg)
     misc_data_loc = '/nas/longleaf/home/dieckhau/protein-stability/enzyme-stability/data'
+    test_dir = '/home/jjmiller/modules/ThermoMPNN/test'
+    verbose = False #Do you want verbose output?
+
 
     models = {
         'ProteinMPNN': ProteinMPNNBaseline(cfg, version='v_48_020.pt'),
-        "ThermoMPNN": get_trained_model(model_name='example_training_mega_epoch=55_val_ddG_spearman=0.79.ckpt',
+        "ThermoMPNN": get_trained_model(model_name='thermoMPNN_default.pt',
                                         config=cfg)
 
         # "Model-CV0": TransferModelPL.load_from_checkpoint('checkpoints/CV0_epoch=32_val_ddG_spearman=0.73.ckpt', cfg=cfg).model,
@@ -88,8 +91,9 @@ def main(cfg, args):
 
         # "Fireprot-test": FireProtDataset(cfg, "test")
         # "Fireprot-homologue-free": FireProtDataset(cfg, "homologue-free"),
-        "P53": ddgBenchDataset(cfg, pdb_dir=os.path.join(misc_data_loc, 'protddg-bench-master/P53/pdbs'),
-                               csv_fname=os.path.join(misc_data_loc, 'protddg-bench-master/P53/p53_clean.csv')),
+        # "P53": ddgBenchDataset(cfg, pdb_dir=os.path.join(misc_data_loc, 'protddg-bench-master/P53/pdbs'),
+        #                      csv_fname=os.path.join(misc_data_loc, 'protddg-bench-master/P53/p53_clean.csv')),
+        "SSM-varied-poses": CustomDataset(cfg, pdb_dir=test_dir, csv_fname=os.path.join(test_dir,'Mass-Predict.csv'))
     }
 
     max_batches = None
@@ -99,11 +103,14 @@ def main(cfg, args):
         model = model.eval()
         model = model.cuda()
         for dataset_name, dataset in datasets.items():
-            raw_pred_df = pd.DataFrame(columns=['WT Seq', 'Model', 'Dataset', 'ddG_pred', 'position', 'wildtype', 'mutation',
-                                                        'neighbors', 'best_AA'])
+            raw_pred_df = pd.DataFrame(columns=['wildtype', 'mutation','ddG_pred', 'position'])
+
             print('Running model %s on dataset %s' % (name, dataset_name))
             for i, batch in enumerate(tqdm(dataset)):
                 mut_pdb, mutations = batch
+
+                #Pull the first residue number out so we can renumber the output according to orginal pdb
+                first_resi_n = int(mut_pdb[0]['resn_list'][0])
 
                 # generate all SSM mutations
                 mutation_list = get_ssm_mutations(mut_pdb[0])
@@ -116,7 +123,6 @@ def main(cfg, args):
                     continue
                   m = m.strip()  # clear whitespace
                   wtAA, position, mutAA = str(m[0]), int(str(m[1:-1])), str(m[-1])
-
                   assert wtAA in ALPHABET, f"Wild type residue {wtAA} invalid, please try again with one of the following options: {ALPHABET}"
                   assert mutAA in ALPHABET, f"Wild type residue {mutAA} invalid, please try again with one of the following options: {ALPHABET}"
                   mutation_obj = Mutation(position=position, wildtype=wtAA, mutation=mutAA, 
@@ -134,21 +140,28 @@ def main(cfg, args):
                 for mut, out in zip(final_mutation_list, pred):
                     if mut is not None:
                         col_list = ['ddG_pred', 'position', 'wildtype', 'mutation', 'pdb']
-                        val_list = [out["ddG"].cpu().item(), mut.position, mut.wildtype,
+                        val_list = [out["ddG"].cpu().item(), mut.position+first_resi_n, mut.wildtype,
                                     mut.mutation, mut.pdb.strip('.pdb')]
                         for col, val in zip(col_list, val_list):
                             raw_pred_df.loc[row, col] = val
 
-                        if args.centrality:
-                            raw_pred_df.loc[row, 'neighbors'] = neighbors[mut.position].cpu().item()
 
-                        raw_pred_df.loc[row, 'Model'] = name
-                        raw_pred_df.loc[row, 'Dataset'] = dataset_name
-                        if 'Megascale' not in dataset_name:
-                            key = mut.pdb
-                        else:
-                            key = mut.pdb + '.pdb'
-                        raw_pred_df.loc[row, 'WT Seq'] = dataset.wt_seqs[key]
+                        if verbose == True:
+                            raw_pred_df['WT Seq']=""
+                            raw_pred_df['Model']=""
+                            raw_pred_df['Dataset']=""
+                            raw_pred_df['best_AA']=""
+
+                            if args.centrality:
+                                raw_pred_df.loc[row, 'neighbors'] = neighbors[mut.position].cpu().item()
+                                raw_pred_df['neighbors']=""
+                            raw_pred_df.loc[row, 'Model'] = name
+                            raw_pred_df.loc[row, 'Dataset'] = dataset_name
+                            if 'Megascale' not in dataset_name:
+                                key = mut.pdb
+                            else:
+                                key = mut.pdb + '.pdb'
+                            raw_pred_df.loc[row, 'WT Seq'] = dataset.wt_seqs[key]
                         row += 1
 
                 if args.pick_best:
@@ -173,7 +186,7 @@ def main(cfg, args):
                 print('Mutations processed:', raw_pred_df.shape)
 
             raw_pred_df = raw_pred_df.reset_index(drop=True)
-            raw_pred_df.to_csv(name + '_' + dataset_name + "_SSM_preds.csv")
+            raw_pred_df.to_csv(name + '_' + dataset_name + "_SSM_preds.csv", index=False)
             del raw_pred_df
 
 

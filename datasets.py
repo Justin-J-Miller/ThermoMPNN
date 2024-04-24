@@ -316,6 +316,72 @@ class ddgBenchDataset(torch.utils.data.Dataset):
 
         return pdb, mutations
 
+class CustomDataset(torch.utils.data.Dataset):
+
+    def __init__(self, cfg, pdb_dir, csv_fname):
+
+        self.cfg = cfg
+        self.pdb_dir = pdb_dir
+
+        df = pd.read_csv(csv_fname)
+        self.df = df
+
+        self.wt_seqs = {}
+        self.mut_rows = {}
+        self.wt_names = df.PDB.unique()
+
+        for wt_name in self.wt_names:
+            wt_name_query = wt_name
+            self.mut_rows[wt_name] = df.query('PDB == @wt_name_query').reset_index(drop=True)
+            self.wt_seqs[wt_name] = self.mut_rows[wt_name].SEQ[0]
+
+    def __len__(self):
+        return len(self.wt_names)
+
+    def __getitem__(self, index):
+        """Batch retrieval fxn - each batch is a single protein"""
+
+        wt_name = self.wt_names[index]
+        mut_data = self.mut_rows[wt_name]
+
+        pdb_file = os.path.join(self.pdb_dir, wt_name + '.pdb')
+
+        # modified PDB parser returns list of residue IDs so we can align them easier
+        pdb = alt_parse_PDB(pdb_file, 'A')
+        resn_list = pdb[0]["resn_list"]
+
+        mutations = []
+        for i, row in mut_data.iterrows():
+            mut_info = row.MUT
+            wtAA, mutAA = mut_info[0], mut_info[-1]
+            try:
+                pos = mut_info[1:-1]
+                pdb_idx = resn_list.index(pos)
+            except ValueError:  # skip positions with insertion codes for now - hard to parse
+                continue
+            try:
+                assert pdb[0]['seq'][pdb_idx] == wtAA
+            except AssertionError:  # contingency for mis-alignments
+                # if gaps are present, add these to idx (+10 to get any around the mutation site, kinda a hack)
+                #All original code from tMPNN, assume not needed for this case since most MD centers are gap-less.
+                if 'S669' in self.pdb_dir:
+                    gaps = [g for g in pdb[0]['seq'] if g == '-']
+                else:
+                    gaps = [g for g in pdb[0]['seq'][:pdb_idx + 10] if g == '-']                
+
+                if len(gaps) > 0:
+                    pdb_idx += len(gaps)
+                else:
+                    pdb_idx += 1
+
+                if pdb_idx is None:
+                    continue
+                assert pdb[0]['seq'][pdb_idx] == wtAA
+            ddG = None if row.DDG is None or isnan(row.DDG) else torch.tensor([row.DDG * -1.], dtype=torch.float32)
+            mut = Mutation(pdb_idx, pdb[0]['seq'][pdb_idx], mutAA, ddG, wt_name)
+            mutations.append(mut)
+
+        return pdb, mutations
 
 class ComboDataset(torch.utils.data.Dataset):
 
