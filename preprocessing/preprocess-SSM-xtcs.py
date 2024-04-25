@@ -14,7 +14,7 @@ def preprocess(args):
 
 	#Prepare csv
 	PDB_paths = sorted(glob(f'{args.outdir}/state*.pdb'))
-	PDBs = [Path(pdb).stem for pdb in PDB_paths[:3]]
+	PDBs = [Path(pdb).stem for pdb in PDB_paths]
 	MUT = ['A']*len(PDBs) #This doesn't matter and will be overwritten in SSM.py
 	SEQ = trj.top.to_fasta()*len(PDBs)
 	df = pd.DataFrame({'PDB':PDBs, 'MUT':MUT, 'SEQ':SEQ})
