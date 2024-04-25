@@ -3,8 +3,10 @@ import pandas as pd
 from glob import glob
 from pathlib import Path
 import argparse
+from os import makedirs
 
 def preprocess(args):
+	makedirs(args.outdir, exist_ok=True)
 	#Convert xtc to pdbs
 	trj = md.load(args.xtc,top=args.top)
 	for i, pdb in enumerate(trj):
@@ -24,7 +26,7 @@ if __name__ == "__main__":
         help='Path to centers xtc file.')
     parser.add_argument('--top', '-s', required=True,
     	help='Path to topology file to load centers.')
-    parser.add_argument('--outdir','-o', required=False,
+    parser.add_argument('--outdir','-o', required=False, default='./',
     	help='Where do you want output saved?')
 
     args = parser.parse_args()
