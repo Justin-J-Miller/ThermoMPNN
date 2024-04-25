@@ -45,6 +45,8 @@ def retrieve_best_mutants(df_slice, allow_cys=True):
 def main(cfg, args):
     """Inference script that does site-saturation mutagenesis for a given protein"""
     # define config for model loading
+    os.makedirs(args.outdir, exist_ok=True)
+
     config = {
         'training': {
             'num_workers': 8,
@@ -64,36 +66,15 @@ def main(cfg, args):
     }
 
     cfg = OmegaConf.merge(config, cfg)
-    misc_data_loc = '/nas/longleaf/home/dieckhau/protein-stability/enzyme-stability/data'
-    test_dir = '/home/jjmiller/modules/ThermoMPNN/test'
-    verbose = False #Do you want verbose output?
-
 
     models = {
         'ProteinMPNN': ProteinMPNNBaseline(cfg, version='v_48_020.pt'),
         "ThermoMPNN": get_trained_model(model_name='thermoMPNN_default.pt',
                                         config=cfg)
-
-        # "Model-CV0": TransferModelPL.load_from_checkpoint('checkpoints/CV0_epoch=32_val_ddG_spearman=0.73.ckpt', cfg=cfg).model,
-        # "Model-CV1": TransferModelPL.load_from_checkpoint('checkpoints/CV1_epoch=27_val_ddG_spearman=0.76.ckpt', cfg=cfg).model,
-        # "Model-CV2": TransferModelPL.load_from_checkpoint('checkpoints/CV2_epoch=23_val_ddG_spearman=0.75.ckpt', cfg=cfg).model,
-        # "Model-CV3": TransferModelPL.load_from_checkpoint('checkpoints/CV3_epoch=24_val_ddG_spearman=0.74.ckpt', cfg=cfg).model,
-        # "Model-CV4": TransferModelPL.load_from_checkpoint('checkpoints/CV4_epoch=31_val_ddG_spearman=0.76.ckpt', cfg=cfg).model,
     }
 
     datasets = {
-        # "Megascale-test": MegaScaleDataset(cfg, "test"),
-        # "Megascale-CV0": MegaScaleDataset(cfg, "cv_test_0"),
-        # "Megascale-CV1": MegaScaleDataset(cfg, "cv_test_1"),
-        # "Megascale-CV2": MegaScaleDataset(cfg, "cv_test_2"),
-        # "Megascale-CV3": MegaScaleDataset(cfg, "cv_test_3"),
-        # "Megascale-CV4": MegaScaleDataset(cfg, "cv_test_4"),
-
-        # "Fireprot-test": FireProtDataset(cfg, "test")
-        # "Fireprot-homologue-free": FireProtDataset(cfg, "homologue-free"),
-        # "P53": ddgBenchDataset(cfg, pdb_dir=os.path.join(misc_data_loc, 'protddg-bench-master/P53/pdbs'),
-        #                      csv_fname=os.path.join(misc_data_loc, 'protddg-bench-master/P53/p53_clean.csv')),
-        "SSM-varied-poses": CustomDataset(cfg, pdb_dir=test_dir, csv_fname=os.path.join(test_dir,'Mass-Predict.csv'))
+        args.prot_name: CustomDataset(cfg, pdb_dir=args.inp_dir, csv_fname=f'{args.inp_dir}/centers.csv')
     }
 
     max_batches = None
@@ -146,7 +127,7 @@ def main(cfg, args):
                             raw_pred_df.loc[row, col] = val
 
 
-                        if verbose == True:
+                        if args.verbose == True:
                             raw_pred_df['WT Seq']=""
                             raw_pred_df['Model']=""
                             raw_pred_df['Dataset']=""
@@ -186,7 +167,7 @@ def main(cfg, args):
                 print('Mutations processed:', raw_pred_df.shape)
 
             raw_pred_df = raw_pred_df.reset_index(drop=True)
-            raw_pred_df.to_csv(name + '_' + dataset_name + "_SSM_preds.csv", index=False)
+            raw_pred_df.to_csv(f'{args.outdir}/{name}_{dataset_name}_SSM_preds.csv', index=False)
             del raw_pred_df
 
 
@@ -194,6 +175,14 @@ if __name__ == "__main__":
     cfg = OmegaConf.load("../local.yaml")
     import argparse
     parser = argparse.ArgumentParser()
+    parser.add_argument('--inp_dir','-f', required=True,
+        help='Path to output from preprocess-SSM-xtcs.py.')
+    parser.add_argument('--verbose', default=False, type=bool,
+        help='Do you want verbose output?')
+    parser.add_argument('--prot_name', default='MSM', type=str,
+        help='Name to prepend output file with.')
+    parser.add_argument('--outdir', '-o', default='./',
+        help='Where do you want output saved?')
     parser.add_argument('--pick_best', action='store_true', default=False,
                         help='Keep only the BEST mutation at each position')
     parser.add_argument('--include_cys', action='store_true', default=False,
